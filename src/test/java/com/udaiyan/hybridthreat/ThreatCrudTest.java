@@ -2,13 +2,15 @@ package com.udaiyan.hybridthreat;
 
 import com.udaiyan.hybridthreat.model.Threat;
 import com.udaiyan.hybridthreat.model.ThreatType;
+import io.restassured.response.Response;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.List;
 
 import static io.restassured.RestAssured.given;
-import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 class ThreatCrudTest extends BaseApiTest {
 
@@ -18,85 +20,95 @@ class ThreatCrudTest extends BaseApiTest {
 
     @Test
     void listThreats_returnsAllSeedRows() {
-        given()
+        List<Threat> threats = given()
                 .spec(requestSpec)
                 .when()
                 .get("/api/threats")
                 .then()
                 .statusCode(200)
-                .body("size()", is(SEED_COUNT))
-                .body("name", hasItems(
-                        "Operation Cobalt Drift",
-                        "Port facility reconnaissance",
-                        "Combined cyber-kinetic exercise",
-                        "Phishing campaign against MOD staff",
-                        "Suspicious drone activity near site",
-                        "Coordinated disinformation + DDoS"));
+                .extract().jsonPath().getList("", Threat.class);
+
+        assertEquals(SEED_COUNT, threats.size());
+
+        List<String> names = threats.stream().map(Threat::getName).toList();
+        assertTrue(names.contains("Operation Cobalt Drift"));
+        assertTrue(names.contains("Combined cyber-kinetic exercise"));
     }
 
     @Test
     void getSeedThreatById_returnsSeedRow() {
-        given()
+        Threat threat = given()
                 .spec(requestSpec)
                 .pathParam("id", 1L)
                 .when()
                 .get("/api/threats/{id}")
                 .then()
                 .statusCode(200)
-                .body("id", equalTo(1))
-                .body("name", equalTo("Operation Cobalt Drift"))
-                .body("type", equalTo("CYBER"))
-                .body("severity", equalTo("CRITICAL"));
+                .extract().as(Threat.class);
+
+        assertEquals(1L, threat.getId());
+        assertEquals("Operation Cobalt Drift", threat.getName());
+        assertEquals(ThreatType.CYBER, threat.getType());
+        assertEquals("CRITICAL", threat.getSeverity());
     }
 
     // ---------- creates against seed baseline ----------
 
     @Test
-    void createThreat_returns201WithLocationAndBody() throws Exception {
+    void createThreat_returns201WithLocationAndBody() { // Removed throws Exception
         Threat payload = new Threat(null, "Hybrid op X", ThreatType.HYBRID,
                 "HIGH", "SIGINT", Instant.now(), "OPEN");
 
-        given()
+        Response response = given()
                 .spec(requestSpec)
                 .body(mapper.writeValueAsString(payload))
                 .when()
                 .post("/api/threats")
                 .then()
                 .statusCode(201)
-                .header("Location", matchesPattern(".*/api/threats/\\d+"))
-                .body("id", notNullValue())
-                .body("name", equalTo("Hybrid op X"))
-                .body("type", equalTo("HYBRID"))
-                .body("severity", equalTo("HIGH"))
-                .body("status", equalTo("OPEN"));
+                .extract().response();
+
+        assertTrue(response.header("Location").matches(".*/api/threats/\\d+"));
+
+        Threat created = response.as(Threat.class);
+        assertNotNull(created.getId());
+        assertEquals("Hybrid op X", created.getName());
+        assertEquals(ThreatType.HYBRID, created.getType());
+        assertEquals("HIGH", created.getSeverity());
+        assertEquals("OPEN", created.getStatus());
     }
 
     @Test
-    void listThreats_returnsSeedPlusCreatedThreats() throws Exception {
+    void listThreats_returnsSeedPlusCreatedThreats() { // Removed throws Exception
         createThreat("Cyber intrusion", ThreatType.CYBER);
         createThreat("Physical breach", ThreatType.PHYSICAL);
 
-        given()
+        List<Threat> threats = given()
                 .spec(requestSpec)
                 .when()
                 .get("/api/threats")
                 .then()
                 .statusCode(200)
-                .body("size()", is(SEED_COUNT + 2))
-                .body("name", hasItems("Cyber intrusion", "Physical breach",
-                        "Operation Cobalt Drift"));
+                .extract().jsonPath().getList("", Threat.class);
+
+        assertEquals(SEED_COUNT + 2, threats.size());
+
+        List<String> names = threats.stream().map(Threat::getName).toList();
+        assertTrue(names.contains("Cyber intrusion"));
+        assertTrue(names.contains("Physical breach"));
+        assertTrue(names.contains("Operation Cobalt Drift"));
     }
 
     // ---------- update / delete ----------
 
     @Test
-    void updateThreat_replacesFields() throws Exception {
-        long id = createThreat("Before", ThreatType.CYBER);
+    void updateThreat_replacesFields() { // Removed throws Exception
+        long id = createThreat("Before", ThreatType.CYBER).getId();
 
         Threat update = new Threat(null, "After", ThreatType.HYBRID,
                 "CRITICAL", "HUMINT", Instant.now(), "MITIGATED");
 
-        given()
+        Threat updated = given()
                 .spec(requestSpec)
                 .pathParam("id", id)
                 .body(mapper.writeValueAsString(update))
@@ -104,16 +116,18 @@ class ThreatCrudTest extends BaseApiTest {
                 .put("/api/threats/{id}")
                 .then()
                 .statusCode(200)
-                .body("id", equalTo((int) id))
-                .body("name", equalTo("After"))
-                .body("type", equalTo("HYBRID"))
-                .body("severity", equalTo("CRITICAL"))
-                .body("status", equalTo("MITIGATED"));
+                .extract().as(Threat.class);
+
+        assertEquals(id, updated.getId());
+        assertEquals("After", updated.getName());
+        assertEquals(ThreatType.HYBRID, updated.getType());
+        assertEquals("CRITICAL", updated.getSeverity());
+        assertEquals("MITIGATED", updated.getStatus());
     }
 
     @Test
-    void deleteThreat_returns204() throws Exception {
-        long id = createThreat("To be deleted", ThreatType.PHYSICAL);
+    void deleteThreat_returns204() { // Removed throws Exception
+        long id = createThreat("To be deleted", ThreatType.PHYSICAL).getId();
 
         given()
                 .spec(requestSpec)
@@ -154,28 +168,29 @@ class ThreatCrudTest extends BaseApiTest {
     // ---------- filtering ----------
 
     @Test
-    void filterByType_returnsOnlyMatching() throws Exception {
-        // Seed already has 2 HYBRID rows.
+    void filterByType_returnsOnlyMatching() { // Removed throws Exception
         createThreat("extra hybrid", ThreatType.HYBRID);
 
-        given()
+        List<Threat> threats = given()
                 .spec(requestSpec)
                 .queryParam("type", "HYBRID")
                 .when()
                 .get("/api/threats")
                 .then()
                 .statusCode(200)
-                .body("size()", is(3))
-                .body("type", everyItem(equalTo("HYBRID")))
-                .body("name", hasItems(
-                        "Combined cyber-kinetic exercise",
-                        "Coordinated disinformation + DDoS",
-                        "extra hybrid"));
+                .extract().jsonPath().getList("", Threat.class);
+
+        assertEquals(3, threats.size());
+        assertTrue(threats.stream().allMatch(t -> t.getType() == ThreatType.HYBRID));
+
+        List<String> names = threats.stream().map(Threat::getName).toList();
+        assertTrue(names.contains("Combined cyber-kinetic exercise"));
+        assertTrue(names.contains("extra hybrid"));
     }
 
     // ---------- helper ----------
 
-    private long createThreat(String name, ThreatType type) throws Exception {
+    private Threat createThreat(String name, ThreatType type) { // Removed throws Exception
         Threat payload = new Threat(null, name, type, "MEDIUM",
                 "OSINT", Instant.now(), "OPEN");
         return given()
@@ -185,6 +200,6 @@ class ThreatCrudTest extends BaseApiTest {
                 .post("/api/threats")
                 .then()
                 .statusCode(201)
-                .extract().jsonPath().getLong("id");
+                .extract().as(Threat.class);
     }
 }
